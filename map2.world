@@ -1,0 +1,42 @@
+# insert the code of the .inc files here
+include "map2.inc"
+include "vacuumbot.inc"
+include "obstaclebot.inc"
+
+# definition of the window
+window 
+(
+  
+   # size in pixels
+   size [490 560]
+   
+   # meters per pixel
+   scale 50
+
+   # show data
+   show_data 1
+)
+
+# instantiate a flooplan
+floorplan 
+(
+   name "floorplan"
+   bitmap "map2.png"
+   size [9.8 11.2 2.5]
+)
+
+
+# instantiate a weebob robot
+vacuumbot
+(
+   name "vacuumbot0"
+   pose [4.3 -3 0 180]
+   color "red"
+)
+
+obstaclebot
+(
+   name "obstaclebot0"
+   pose [-3 2 0 0]
+   color "yellow"
+)

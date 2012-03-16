@@ -1,0 +1,1629 @@
+
+import java.awt.BorderLayout;
+import java.awt.Container;
+import javax.swing.JFrame;
+import javax.swing.JTextArea;
+
+import version0_57.Storage;
+import javaclient3.PlayerClient;
+import javaclient3.Position2DInterface;
+import javaclient3.PlayerException;
+import javaclient3.structures.PlayerConstants;
+import javaclient3.RangerInterface;
+
+import java.util.*;
+import java.awt.Point;
+
+/**
+ * BaseRobot is a base class for the maze runner problem. This class is to be
+ * extended with additional methods to allow the mazerunner robot to navigate
+ * the given labyrinth.
+ */
+public class VacuumBot {
+	/**
+	 * Constant denoting to what precision the robot measures yaw. Higher
+	 * numbers indicate higher precision.
+	 */
+	static VacuumBot vacuumBot;
+	protected final static int PRECISION = 200;
+	public final static int NORTH = 0;
+	public final static int EAST = 1;
+	public final static int WEST = 2;
+	public final static int SOUTH = 3;
+	PlayerClient robot = null;
+	Position2DInterface pos2D = null;
+	RangerInterface sonar = null;
+	int heading;
+	double[] sonarValues;
+	double[] lastValues;
+	Map map;
+	double x, y, yaw;
+	int i, j;
+	drawMap dm;
+	static VisualMap visualmap;
+	AStar1 as;
+	Vector<Cell> path = new Vector<Cell>();
+	Vector<Cell> turningPoints = new Vector<Cell>();
+	boolean pathFollowing = false;
+	boolean turning = false;
+	boolean avoidanceFlag = true;
+	boolean recoveryFlag = true;
+	boolean moveAlongPathFlag = true;
+	boolean turningFlag = false;
+	double direction = 1;
+
+	Vector<Vector<Cell>> frontier = new Vector<Vector<Cell>>();
+	Vector<Cell> tempFrontier = new Vector<Cell>();
+
+	/*
+	 * Vector<Cell> oldN = new Vector<Cell>(); Vector<Cell> currentN = new
+	 * Vector<Cell>(); Vector<Cell> oldE = new Vector<Cell>(); Vector<Cell>
+	 * currentE = new Vector<Cell>(); Vector<Cell> oldW = new Vector<Cell>();
+	 * Vector<Cell> currentW = new Vector<Cell>(); Vector<Cell> oldS = new
+	 * Vector<Cell>(); Vector<Cell> currentS = new Vector<Cell>();
+	 */
+
+	/**
+	 * Constructor for the robot, which sets up the proxy objects and a thread
+	 * to keep the sensor fields up to date.
+	 */
+	public VacuumBot() {
+
+		vacuumBot = this;
+		// Set up service proxies
+		try {
+			robot = new PlayerClient("localhost", 6665);
+			pos2D = robot.requestInterfacePosition2D(0,
+					PlayerConstants.PLAYER_OPEN_MODE);
+			sonar = robot.requestInterfaceRanger(0,
+					PlayerConstants.PLAYER_OPEN_MODE);
+		} catch (PlayerException e) {
+			System.err.println("VacuumBot: Error connecting to Player!\n>>>"
+					+ e.toString());
+			System.exit(1);
+		}
+		map = new Map(120);
+		// System.out.println("avem "+Cell.cells.size()+" celule");
+
+		robot.runThreaded(-1, -1);
+
+		// pos2D.setSpeed(0.5,0);
+		while (!sonar.isDataReady())
+			;
+
+		double[] sonarValues = sonar.getData().getRanges();
+		for (double a : sonarValues) {
+			System.out.println(a);
+		}
+
+		lastValues = new double[15];
+		for (int i = 0; i < lastValues.length; i++) {
+			lastValues[i] = sonarValues[i];
+		}
+
+		x = (Math.round(pos2D.getX() * 100)) / 100.0;
+		y = (Math.round(pos2D.getY() * 100)) / 100.0;
+		yaw = (Math.round(pos2D.getYaw() * 100)) / 100.0;
+
+		// A* test
+		// ////////////////////////////////////
+
+		/*
+		 * Cell[][] m = map.getMap();
+		 * 
+		 * int x1 = (int) Math.round(x * 10) + 60; int y1 = map.map.length -
+		 * ((int) Math.round(y * 10) + 60);
+		 * 
+		 * System.out.println("robotX "+x1+" robotY"+y1);
+		 * 
+		 * for (int i = 60; i < 107; i++) for (int j = 70; j < 100; j++)
+		 * m[i][j].setState(Map.FREE);
+		 * 
+		 * for (int i = 83; i < 107; i++) for (int j = 80; j < 87; j++)
+		 * m[i][j].setState(Map.OCCUPIED);
+		 * 
+		 * 
+		 * for (int j=87;j<120;j++) m[107][j].setState(Map.OCCUPIED);
+		 * 
+		 * as = new AStar1(map);
+		 * 
+		 * path = new Vector<Cell>(); path = as.findPath(m[x1][y1], m[88][75]);
+		 * path.add(0, m[x1][y1]);
+		 * 
+		 * m[x1][y1].setState(Map.ROBOT); m[88][75].setState(Map.ROBOT);
+		 * 
+		 * //
+		 * System.out.println("start :"+m[x1][y1].getPosition().x+" "+m[x1][y1
+		 * ].getPosition().y); //
+		 * System.out.println("finish: "+m[x1-14][y1-11].getPosition
+		 * ().x+" "+m[x1-14][y1-11].getPosition().y);
+		 * 
+		 * // the path to the target for (int i = 0; i < path.size(); i++) {
+		 * System.out.println(path.get(i).getPosition().x + " "
+		 * +path.get(i).getPosition().y);
+		 * m[path.get(i).getPosition().x][path.get
+		 * (i).getPosition().y].setState(3); }
+		 * 
+		 * // /////////////////////////////////// // A* test
+		 */
+
+		dm = new drawMap(map);
+		// collectionThread();
+		// turnThread();
+		// sensorOutput();
+		positionChecker();
+		sensorChecker();
+		mapping();
+		moveAlongPath();
+		avoidance();
+		recovery();
+		// turn(180, 0.1);
+		// turn(180, 0.1);
+
+		/*
+		 * System.out.println("Starting getting all frontier"); getFrontier();
+		 * System.out.println("Starting separate frontier"); separateFrontier();
+		 * System.out.println("Starting Printing"); for(int
+		 * i=0;i<frontier.size();i++){ System.out.print("Frontier Area Number:"+
+		 * i +";   "); System.out.println("This area has total "+
+		 * frontier.get(i).size() + " cells;"); for(int
+		 * j=0;j<frontier.get(i).size();j++){
+		 * 
+		 * System.out.print("  X: "+frontier.get(i).get(j).getX() +
+		 * " Y:"+frontier.get(i).get(j).getY()); } System.out.println(); }
+		 */
+
+	}
+
+	private void getFrontier() {
+
+		tempFrontier.clear();
+
+		for (int i = 1; i < map.map.length - 1; i++) {
+			for (int j = 1; j < map.map[i].length - 1; j++) {
+				if (map.map[i][j].getState() == 2
+						|| map.map[i][j].getState() == 4) {
+					if (map.map[i + 1][j].getState() == 1
+							|| map.map[i - 1][j].getState() == 1
+							|| map.map[i][j + 1].getState() == 1
+							|| map.map[i][j - 1].getState() == 1) {
+
+						// map.map[i][j].setState(4);
+						tempFrontier.add(map.map[i][j]);
+					}
+
+				}
+			}
+		}
+
+		/*
+		 * for(int i=0;i<tempFrontier.size();i++){
+		 * if(tempFrontier.get(i).getState() != 4){ tempFrontier.remove(i); i--;
+		 * } }
+		 */
+
+	}
+
+	private void separateFrontier() {
+
+		frontier.clear();
+		int i = 0;
+		while (!tempFrontier.isEmpty()) {
+
+			Vector<Cell> temp = new Vector<Cell>();
+			temp.add(tempFrontier.remove(0));
+			frontier.add(temp);
+			temp = null;
+
+			for (int j = 0; j < frontier.get(i).size(); j++) {
+
+				Cell a = frontier.get(i).get(j);
+
+				for (int k = 0; k < tempFrontier.size(); k++) {
+					Cell b = tempFrontier.get(k);
+					if ((b.getX() + 1 == a.getX() && b.getY() == a.getY())
+							|| (b.getX() - 1 == a.getX() && b.getY() == a
+									.getY())
+							|| (b.getX() + 1 == a.getX() && b.getY() + 1 == a
+									.getY())
+							|| (b.getX() + 1 == a.getX() && b.getY() - 1 == a
+									.getY())
+							|| (b.getX() == a.getX() && b.getY() + 1 == a
+									.getY())
+							|| (b.getX() == a.getX() && b.getY() - 1 == a
+									.getY())
+							|| (b.getX() - 1 == a.getX() && b.getY() + 1 == a
+									.getY())
+							|| (b.getX() - 1 == a.getX() && b.getY() - 1 == a
+									.getY())) {
+						tempFrontier.remove(b);
+						frontier.get(i).add(b);
+						// b.setState(4);
+						b = null;
+						k--;
+
+					}
+				}
+				a = null;
+
+			}
+			// System.out.println("Area:" +i);
+			i++;
+		}
+
+		for (int g = 0; g < frontier.size(); g++) {
+			if (frontier.get(g).size() < 5) {
+				frontier.remove(g);
+				g--;
+			}
+		}
+
+		checkFrontier();
+
+	}
+
+	public void checkFrontier() {
+
+		System.out.println("Intru sa reduc");
+		int minX, maxX, minY, maxY;
+		System.out.println("Inainte de reducere sunt " + frontier.size()
+				+ " frontiere");
+
+		if (frontier.size() == 1)
+			return;
+
+		for (int i = 0; i < frontier.size(); i++) {
+			minX = Integer.MAX_VALUE;
+			maxX = Integer.MIN_VALUE;
+			minY = Integer.MAX_VALUE;
+			maxY = Integer.MIN_VALUE;
+
+			for (int j = 0; j < frontier.get(i).size(); j++) {
+				if (minY > frontier.get(i).get(j).getY())
+					minY = frontier.get(i).get(j).getY();
+
+				if (maxY < frontier.get(i).get(j).getY())
+					maxY = frontier.get(i).get(j).getY();
+
+				if (minX > frontier.get(i).get(j).getX())
+					minX = frontier.get(i).get(j).getX();
+
+				if (maxX < frontier.get(i).get(j).getX())
+					maxX = frontier.get(i).get(j).getX();
+			}
+
+			System.out.println("minX pt frontiera " + i + " este " + minX);
+			System.out.println("maxX pt frontiera " + i + " este " + maxX);
+			System.out.println("minY pt frontiera " + i + " este " + minY);
+			System.out.println("maxY pt frontiera " + i + " este " + maxY);
+
+			if (frontier.size() == 2) {
+				if (frontier.get(0).size() > frontier.get(1).size())
+					frontier.remove(1);
+				else
+					frontier.remove(0);
+			}
+
+			if (frontier.size() > 2) {
+				if (Math.abs(minY - maxY) < 4) {
+					System.out.println("AM ELIMAT PE Y");
+					for (int k = 0; k < frontier.get(i).size(); k++) {
+						frontier.get(i).get(k).setState(5);
+					}
+					frontier.remove(i);
+
+					i--;
+				} else if (Math.abs(minX - maxX) < 4) {
+					System.out.println("AM ELIMINAT PE X");
+					for (int k = 0; k < frontier.get(i).size(); k++) {
+						frontier.get(i).get(k).setState(5);
+					}
+					frontier.remove(i);
+
+					i--;
+				}
+			}// else
+				// return;
+
+		}
+
+		for (int i = 0; i < frontier.size(); i++) {
+			for (int j = 0; j < frontier.get(i).size(); j++) {
+				frontier.get(i).get(j).setState(4);
+			}
+		}
+	}
+
+	public boolean checkArea(int x, int y) {
+
+		for (int i = x - 3; i <= x + 3; i++) {
+			for (int j = y - 3; j <= y + 3; j++) {
+				if (i < 0 || i >= map.getLength() || j < 0
+						|| j >= map.getLength()) {
+					return false;
+				} else {
+					if (map.map[i][j].getState() == Map.OCCUPIED) {
+						return false;
+					}
+				}
+			}
+		}
+
+		return true;
+	}
+
+	public void getNextTarget() {
+
+		as = new AStar1(map);
+		Cell target = new Cell();
+		int min = Integer.MAX_VALUE;
+		int k, p;
+
+		path.clear();
+		// System.out.println("start "+map.map[i][j].getX()+" "+map.map[i][j].getY());
+		// System.out.println("target "+target.getX()+" "+target.getY());
+
+		Vector<Cell> tempPath = new Vector<Cell>();
+
+		for (k = 0; k < frontier.size(); k++) {
+			for (p = 0; p < frontier.get(k).size(); p++) {
+				if (checkArea(frontier.get(k).get(p).getX(), frontier.get(k)
+						.get(p).getY())) {
+					target = frontier.get(k).get(p);
+					System.out.println("target is: " + target.getX() + "  "
+							+ target.getY());
+					break;
+				}
+			}
+
+			if (p != frontier.get(k).size()) {
+				tempPath = as.findPath(map.map[i][j], target);
+				tempPath.add(0, map.map[i][j]);
+
+				System.out.println("cost to the frontier " + k + " is "
+						+ target.getGValue());
+
+				if (min > target.getGValue()) {
+					min = target.getGValue();
+					path.clear();
+					path.addAll(tempPath);
+					for (int i = 0; i < path.size(); i++)
+						System.out.println("X: " + path.get(i).getX() + "  Y: "
+								+ path.get(i).getY());
+				}
+
+				Cell.resetGValues();
+			}
+		}
+
+		// Cell.setFinishCell(path.get(path.size()-1));
+		System.out.println("min is " + min);
+		for (int i = 0; i < path.size(); i++)
+			System.out.println("X: " + path.get(i).getX() + "  Y: "
+					+ path.get(i).getY());
+		// path.get(path.size()-1).setState(4);
+	}
+
+	private void sensorChecker() {
+		Thread sensorChecker = new Thread() {
+			public void run() {
+				double oldError = 0;
+
+				while (true) {
+					while (!sonar.isDataReady())
+						;
+					sonarValues = sonar.getData().getRanges();
+
+					for (int i = 0; i < lastValues.length; i++) {
+						lastValues[i] = sonarValues[i];
+					}
+
+					// if (sonarValues[12] < 0.25)
+					// pos2D.setSpeed(-0.1, 0);
+					try {
+						sleep(5);
+					} catch (InterruptedException e) {
+					}
+				}
+			}
+		};
+		sensorChecker.start();
+	}
+
+	private void positionChecker() {
+		Thread positionChecker = new Thread() {
+			public void run() {
+
+				while (true) {
+					while (!pos2D.isDataReady()) {
+					}
+					x = pos2D.getX();
+					y = pos2D.getY();
+					yaw = pos2D.getYaw();
+
+					yaw = Math.round(yaw * 100) / 100.0;
+
+					if (yaw == 3.14) {
+						heading = WEST;
+					}
+					if (yaw == 0) {
+						heading = EAST;
+					}
+					if (yaw == 1.57) {
+						heading = NORTH;
+					}
+					if (yaw == -1.57) {
+						heading = SOUTH;
+					}
+
+					try {
+						sleep(5);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
+
+		};
+		positionChecker.start();
+	}
+
+	private void sensorOutput() {
+		Thread sensorOutput = new Thread() {
+			public void run() {
+
+				while (true) {
+					/*
+					 * System.out.printf("front: %1.2f", lastValues[3]);
+					 * System.out.printf(" front: %1.2f", lastValues[4]);
+					 * System.out.printf(" front: %1.2f", lastValues[9]);
+					 * System.out.printf(" front: %1.2f", lastValues[10]);
+					 * System.out.printf(" front: %1.2f", lastValues[11]);
+					 * System.out.printf(" front: %1.2f", lastValues[12]);
+					 * 
+					 * System.out.printf(" back: %1.2f", lastValues[0]);
+					 * System.out.printf(" back: %1.2f", lastValues[1]);
+					 * System.out.printf(" back: %1.2f", lastValues[2]);
+					 * 
+					 * System.out.printf(" left: %1.2f", lastValues[5]);
+					 * System.out.printf(" left: %1.2f", lastValues[6]);
+					 * System.out.printf(" left: %1.2f", lastValues[13]);
+					 * 
+					 * System.out.printf(" right: %1.2f", lastValues[7]);
+					 * System.out.printf(" right: %1.2f", lastValues[8]);
+					 * System.out.printf(" right: %1.2f", lastValues[14]);
+					 * System.out.println();
+					 */
+
+					System.out.printf(" front: %1.2f", lastValues[12]);
+					System.out.printf(" back: %1.2f", lastValues[1]);
+					System.out.printf(" left: %1.2f", lastValues[13]);
+					System.out.printf(" right: %1.2f", lastValues[14]);
+
+					System.out.printf(" X: %1.2f", x);
+					System.out.printf(" Y: %1.2f", y);
+					System.out.printf(" Yaw: %1.2f", yaw);
+					System.out.println();
+					try {
+						sleep(1000);
+					} catch (InterruptedException e) {
+					}
+				}
+			}
+		};
+		sensorOutput.start();
+	}
+
+	private void map(double yaw, double value, int lasti, int lastj, int pos) {
+
+		int sign, yN, xN;
+		int l = 0, i;
+
+		if (yaw < 3 * Math.PI / 4 && yaw >= Math.PI / 4) {
+			if (yaw < Math.PI / 2)
+				sign = 1;
+			else
+				sign = -1;
+
+			yN = (int) Math.round(Math.cos(sign * (Math.PI / 2 - yaw)) * value);
+
+			for (i = 0; i < yN; i++) {
+				l = (int) Math.round(i * Math.tan(sign * (Math.PI / 2 - yaw)));
+				// if (map.map[lasti + sign * l][lastj - i].getState() ==
+				// Map.UNKNOWN ||
+				// map.map[lasti + sign * l][lastj - i].getState() ==
+				// Map.FRONTIER ||
+				// map.map[lasti + sign * l][lastj - i].getState() == 5)
+				if (map.map[lasti + sign * l][lastj - i].getState() == Map.OCCUPIED)
+					break;
+				map.map[lasti + sign * l][lastj - i].setState(1);
+			}
+
+			l = (int) Math.round(i * Math.tan(sign * (Math.PI / 2 - yaw)));
+
+			if (i == yN) {
+				if (pos != SOUTH) {
+					if (value < 100)
+						if (map.map[lasti + sign * l][lastj - i].getState() != Map.FREE)
+							map.map[lasti + sign * l][lastj - i].setState(0);
+				} else {
+					map.map[lasti + sign * l][lastj - i].setState(1);
+				}
+			}
+		} else if (yaw < Math.PI / 4 && yaw >= -Math.PI / 4) {
+			if (yaw > 0)
+				sign = 1;
+			else
+				sign = -1;
+
+			xN = (int) Math.round(Math.cos(sign * yaw) * value);
+
+			for (i = 0; i < xN; i++) {
+				l = (int) Math.round(i * Math.tan(sign * yaw));
+				// if (map.map[lasti + i][lastj - sign * l].getState() ==
+				// Map.UNKNOWN ||
+				// map.map[lasti + i][lastj - sign * l].getState() ==
+				// Map.FRONTIER ||
+				// map.map[lasti + i][lastj - sign * l].getState() == 5)
+				if (map.map[lasti + i][lastj - sign * l].getState() == Map.OCCUPIED)
+					break;
+				map.map[lasti + i][lastj - sign * l].setState(1);
+			}
+
+			l = (int) Math.round(i * Math.tan(sign * yaw));
+
+			if (i == xN) {
+				if (pos != SOUTH) {
+					if (value < 100)
+						if (map.map[lasti + i][lastj - sign * l].getState() != Map.FREE)
+							map.map[lasti + i][lastj - sign * l].setState(0);
+				} else {
+					map.map[lasti + i][lastj - sign * l].setState(1);
+				}
+			}
+		} else if (yaw < -Math.PI / 4 && yaw >= -3 * Math.PI / 4) {
+			if (yaw > -Math.PI / 2)
+				sign = 1;
+			else
+				sign = -1;
+
+			yN = (int) Math.round(Math.cos(sign * (Math.PI / 2 + yaw)) * value);
+
+			for (i = 0; i < yN; i++) {
+				l = (int) Math.round(i * Math.tan(sign * (Math.PI / 2 + yaw)));
+				// if (map.map[lasti + sign * l][lastj + i].getState() ==
+				// Map.UNKNOWN ||
+				// map.map[lasti + sign * l][lastj + i].getState() ==
+				// Map.FRONTIER ||
+				// map.map[lasti + sign * l][lastj + i].getState() == 5)
+				if (map.map[lasti + sign * l][lastj + i].getState() == Map.OCCUPIED)
+					break;
+				map.map[lasti + sign * l][lastj + i].setState(1);
+
+			}
+
+			l = (int) Math.round(i * Math.tan(sign * (Math.PI / 2 + yaw)));
+
+			if (i == yN) {
+				if (pos != SOUTH) {
+					if (value < 100)
+						if (map.map[lasti + sign * l][lastj + i].getState() != Map.FREE)
+							map.map[lasti + sign * l][lastj + i].setState(0);
+				} else {
+					map.map[lasti + sign * l][lastj + i].setState(1);
+				}
+			}
+		} else if (yaw < -3 * Math.PI / 4 || yaw > 3 * Math.PI / 4) {
+			if (yaw > 0)
+				sign = -1;
+			else
+				sign = 1;
+
+			xN = (int) Math.round(Math.cos(Math.PI + sign * yaw) * value);
+
+			for (i = 0; i < xN; i++) {
+				l = (int) Math.round(i * Math.tan(Math.PI + sign * yaw));
+				// if (map.map[lasti - i][lastj + sign * l].getState() ==
+				// Map.UNKNOWN ||
+				// map.map[lasti - i][lastj + sign * l].getState() ==
+				// Map.FRONTIER ||
+				// map.map[lasti - i][lastj + sign * l].getState() == 5)
+				if (map.map[lasti - i][lastj + sign * l].getState() == Map.OCCUPIED)
+					break;
+				map.map[lasti - i][lastj + sign * l].setState(1);
+			}
+
+			l = (int) Math.round(i * Math.tan(Math.PI + sign * yaw));
+
+			if (i == xN) {
+				if (pos != SOUTH) {
+					if (value < 100)
+						if (map.map[lasti - i][lastj + sign * l].getState() != Map.FREE)
+							map.map[lasti - i][lastj + sign * l].setState(0);
+				} else {
+					map.map[lasti - i][lastj + sign * l].setState(1);
+				}
+			}
+		}
+
+	}
+
+	/*
+	 * 0 = Occupied; 1 = not occupied; 2 = unknown; 3 = robot;
+	 */
+	private void mapping() {
+
+		Thread mapping = new Thread() {
+			double left, right, top, down;
+			int yN, xN;
+
+			public void run() {
+
+				int lasti, lastj;
+				i = (int) Math.round(x * 10) + 60;
+				j = map.map.length - ((int) Math.round(y * 10) + 60);
+				lasti = i;
+				lastj = j;
+
+				// setCurrentPosttion(i, j);
+				System.out.println(i);
+				System.out.println(j);
+				map.map[i][j].setState(3);
+
+				while (true) {
+					i = (int) Math.round(x * 10) + 60;
+					j = map.map.length - ((int) Math.round(y * 10) + 60);
+
+					// map.map[lasti][lastj].setState(1);
+					// map.map[i][j].setState(3);
+
+					// clearLastPosttion(lasti, lastj);
+					// setCurrentPosttion(i, j);
+					map.map[i][j].setState(3);
+					lasti = i;
+					lastj = j;
+
+					left = sonarValues[13] * 10;
+					down = sonarValues[1] * 10;
+					right = sonarValues[14] * 10;
+					top = sonarValues[12] * 10;
+
+					double l, r, t, d;
+					l = r = t = d = 0;
+
+					if (!turning) {
+						if (yaw > 0 && yaw <= Math.PI / 2) {
+							t = yaw;
+							d = -Math.PI + yaw;
+							l = Math.PI / 2 + yaw;
+							r = -Math.PI / 2 + yaw;
+						} else if (yaw > Math.PI / 2 && yaw <= Math.PI) {
+							t = yaw;
+							d = yaw - Math.PI;
+							l = yaw - 3 * Math.PI / 2;
+							r = yaw - Math.PI / 2;
+						} else if (yaw > -Math.PI && yaw <= -Math.PI / 2) {
+							t = yaw;
+							d = yaw + Math.PI;
+							l = yaw + Math.PI / 2;
+							r = yaw + 3 * Math.PI / 2;
+						} else if (yaw > -Math.PI / 2 && yaw <= 0) {
+							t = yaw;
+							d = yaw + Math.PI;
+							l = yaw + Math.PI / 2;
+							r = yaw - Math.PI / 2;
+						}
+
+						map(t, top, lasti, lastj, NORTH);
+						map(d, down, lasti, lastj, SOUTH);
+						map(l, left, lasti, lastj, WEST);
+						map(r, right, lasti, lastj, EAST);
+
+						dm.updateMap();
+					}
+
+					// System.out.println("no of frontier "+frontier.size());
+					// visualmap.update();
+					// getFrontier();
+					// separateFrontier();
+					// System.out.println(frontier);
+
+					try {
+						sleep(1);
+					} catch (InterruptedException e) {
+					}
+				}
+			}
+		};
+		mapping.start();
+	}
+
+	/**
+	 * Method to cause the robot to turn in a given direction.
+	 * 
+	 * @param direction
+	 *            the given direction.
+	 */
+
+	private Vector<Cell> getTurningPoints() {
+
+		Vector<Cell> turningPoints = new Vector<Cell>();
+
+		for (int i = 0; i < path.size() - 2; i++) {
+			if (path.get(i).getX() != path.get(i + 2).getX()
+					&& path.get(i).getY() != path.get(i + 2).getY()) {
+				turningPoints.add(path.get(i + 1));
+			}
+		}
+
+		for (int i = 0; i < turningPoints.size(); i++)
+			System.out.println("punct de intoarcere: "
+					+ turningPoints.get(i).getX() + "   "
+					+ turningPoints.get(i).getY());
+		return turningPoints;
+	}
+
+	public void makeFirstRotation() {
+
+		if (path.get(0).getX() == path.get(1).getX()) {
+			if (path.get(0).getY() < path.get(1).getY()) {
+				turnSouth();
+			} else {
+				turnNorth();
+			}
+		} else if (path.get(0).getY() == path.get(1).getY()) {
+			if (path.get(0).getX() < path.get(1).getX()) {
+				turnEast();
+			} else {
+				turnWest();
+			}
+		}
+	}
+
+	private void moveAlongPath() {
+		Thread moveAlongPath = new Thread() {
+
+			public void run() {
+
+				while (true) {
+
+					while (moveAlongPathFlag) {
+
+						i = (int) Math.round(x * 10) + 60;
+						j = map.map.length - ((int) Math.round(y * 10) + 60);
+
+						// System.out.println("robotX:  " + i + "    robotY" +
+						// j);
+						if (pathFollowing) {
+
+							if (i == path.get(path.size() - 1).getX()
+									&& j == path.get(path.size() - 1).getY()) {
+								stop1();
+								System.out.println("path traveled");
+								System.out.println("robotX:  " + i
+										+ "    robotY    " + j);
+								pathFollowing = false;
+							} else {
+
+								if (turningPoints.size() > 0) {
+									if (turningPoints.get(0).getX() == i
+											&& turningPoints.get(0).getY() == j) {
+
+										Point p = path.get(
+												path.indexOf(turningPoints
+														.get(0)) + 1)
+												.getPosition();
+
+										turning = true;
+
+										if (i > p.x)
+											turnWest();
+										else if (i < p.x)
+											turnEast();
+										else if (j > p.y)
+											turnNorth();
+										else if (j < p.y)
+											turnSouth();
+
+										System.out.println("am intors la:  "
+												+ turningPoints.get(0).getX()
+												+ "   "
+												+ turningPoints.get(0).getY());
+										turning = false;
+										turningPoints.remove(0);
+
+									}
+								}
+
+								if (turningPoints.size() > 0) {
+									if (Math.abs(i
+											- turningPoints.get(0).getX()) > 1
+											|| Math.abs(j
+													- turningPoints.get(0)
+															.getY()) > 1) {
+										forward();
+									} else {
+										slowForward();
+										// System.out.println("robotX:  " + i +
+										// "    robotY1   " + j);
+									}
+								} else {
+									if (Math.abs(i
+											- path.get(path.size() - 1).getX()) > 1
+											|| Math.abs(j
+													- path.get(path.size() - 1)
+															.getY()) > 1) {
+										forward();
+									} else {
+										slowForward();
+										// System.out.println("robotX:  " + i +
+										// "    robotY2   " + j);
+									}
+								}
+							}
+						} else {
+							stop1();
+							System.out.println("again");
+							// turn(180, 0.1);
+							// turn(180, 0.1);
+							turn360(0.15);
+
+							//Storage1.saveMap("name.txt", map);
+
+							getFrontier();
+							separateFrontier();
+
+							System.out.println("there are " + frontier.size()
+									+ " frontiers");
+
+							for (int i = 0; i < frontier.size(); i++) {
+								System.out.print("Frontier Area Number:" + i
+										+ ";   ");
+								System.out.println("This area has total "
+										+ frontier.get(i).size() + " cells;");
+								for (int j = 0; j < frontier.get(i).size(); j++) {
+
+									System.out.print("  X: "
+											+ frontier.get(i).get(j).getX()
+											+ " Y:"
+											+ frontier.get(i).get(j).getY());
+								}
+								System.out.println();
+							}
+
+							if (frontier.size() == 0) {
+								System.out.println("Mapping done!!!!");
+								break;
+							}
+
+							getNextTarget();
+
+							// for (int i=0;i<path.size();i++)
+							// path.get(i).setState(4);
+
+							System.out.println("TARGET is: "
+									+ path.get(path.size() - 1).getX() + "   "
+									+ path.get(path.size() - 1).getY());
+							turningPoints = getTurningPoints();
+							System.out.println("there are "
+									+ turningPoints.size() + " turning points");
+							turning = true;
+							makeFirstRotation();
+							turning = false;
+							pathFollowing = true;
+						}
+
+						try {
+							sleep(1);
+						} catch (InterruptedException e) {
+						}
+					}
+				}
+			}
+		};
+		moveAlongPath.start();
+	}
+
+	private void getFrontierAndGo() {
+		i = (int) Math.round(x * 10) + 60;
+		j = map.map.length - ((int) Math.round(y * 10) + 60);
+		getFrontier();
+		separateFrontier();
+		System.out.println("there are " + frontier.size() + " frontiers");
+
+		for (int i = 0; i < frontier.size(); i++) {
+			System.out.print("Frontier Area Number:" + i + ";   ");
+			System.out.println("This area has total " + frontier.get(i).size()
+					+ " cells;");
+			for (int j = 0; j < frontier.get(i).size(); j++) {
+
+				System.out.print("  X: " + frontier.get(i).get(j).getX()
+						+ " Y:" + frontier.get(i).get(j).getY());
+			}
+			System.out.println();
+		}
+
+		getNextTarget();
+
+		System.out.println("TARGET is: " + path.get(path.size() - 1).getX()
+				+ "   " + path.get(path.size() - 1).getY());
+		turningPoints = getTurningPoints();
+		System.out.println("there are " + turningPoints.size()
+				+ " turning points");
+		turning = true;
+		makeFirstRotation();
+		turning = false;
+		pathFollowing = true;
+		moveAlongPathFlag = true;
+	}
+
+	public void avoidance() {
+
+		Thread avoidance = new Thread() {
+			public void run() {
+
+				while (true) {
+
+					while (avoidanceFlag) {
+
+						if (sonarValues[9] < 0.2 || sonarValues[10] < 0.2
+								|| sonarValues[11] < 0.2) {
+							System.out.println("Avoidance");
+							moveAlongPathFlag = false;
+							if (path.size() <= 5) {
+								turningFlag = false;
+								pathFollowing = false;
+								pos2D.setSpeed(-0.2, 0);
+								try {
+									sleep(500);
+								} catch (InterruptedException e) {
+									// TODO Auto-generated catch block
+									e.printStackTrace();
+								}
+								stop1();
+								getFrontierAndGo();
+							} else {
+								pos2D.setSpeed(-0.2, 0);
+
+								try {
+									sleep(500);
+								} catch (InterruptedException e) {
+									// TODO Auto-generated catch block
+									e.printStackTrace();
+								}
+								stop1();
+								getFrontierAndGo();
+							}
+
+						}
+
+						else if (sonarValues[0] < 0.05 || sonarValues[1] < 0.05
+								|| sonarValues[2] < 0.05) {
+							System.out.println("Avoidance");
+							moveAlongPathFlag = false;
+							turningFlag = false;
+							pos2D.setSpeed(0.1, 0);
+							try {
+								sleep(400);
+							} catch (InterruptedException e) {
+								// TODO Auto-generated catch block
+								e.printStackTrace();
+							}
+							stop1();
+							getFrontierAndGo();
+						}
+
+						try {
+							sleep(10);
+						} catch (InterruptedException e) {
+							e.printStackTrace();
+						}
+					}
+					try {
+						sleep(100);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+		};
+
+		avoidance.start();
+	}
+
+	public void recovery() {
+
+		Thread recovery = new Thread() {
+			public void run() {
+
+				while (true) {
+
+					while (recoveryFlag) {
+
+						
+						if (turningFlag) {
+							
+							
+							if (sonarValues[4] < 0.03 || sonarValues[3] < 0.03
+									|| (sonarValues[5] < 0.03)
+									|| (sonarValues[6] < 0.03)
+									|| (sonarValues[7] < 0.03)
+									|| (sonarValues[8] < 0.03)
+									|| (sonarValues[0] < 0.03)
+									|| (sonarValues[1] < 0.03)
+									|| (sonarValues[2] < 0.03)) {
+								System.out.println("Recovery");
+								moveAlongPathFlag = false;
+								pathFollowing = false;
+								avoidanceFlag = false;
+								turningFlag = false;
+								
+								pos2D.setSpeed(0, (0-direction) * 0.2);
+								try {
+									sleep(500);
+								} catch (InterruptedException e) {
+									e.printStackTrace();
+								}
+								
+								pos2D.setSpeed(-0.2, 0);
+								try {
+									sleep(1000);
+								} catch (InterruptedException e) {
+									e.printStackTrace();
+								}
+								
+								getFrontierAndGo();
+								avoidanceFlag = true;
+								moveAlongPathFlag = true;
+								
+								
+							}
+
+							/*
+							 * if (sonarValues[4] < 0.02 || sonarValues[3] <
+							 * 0.02 || (sonarValues[5] < 0.02 && sonarValues[0]
+							 * > 0.5 && sonarValues[1] > 0.5 && sonarValues[2] >
+							 * 0.5) || (sonarValues[6] < 0.02 && sonarValues[0]
+							 * > 0.5 && sonarValues[1] > 0.5 && sonarValues[2] >
+							 * 0.5) || (sonarValues[7] < 0.02 && sonarValues[0]
+							 * > 0.5 && sonarValues[1] > 0.5 && sonarValues[2] >
+							 * 0.5) || (sonarValues[8] < 0.02 && sonarValues[0]
+							 * > 0.5 && sonarValues[1] > 0.5 && sonarValues[2] >
+							 * 0.5)) {
+							 * System.out.println("Start recover from crash");
+							 * moveAlongPathFlag = false; avoidanceFlag = false;
+							 * turningFlag = false; pos2D.setSpeed(-0.2, 0); try
+							 * { sleep(500); } catch (InterruptedException e) {
+							 * // TODO Auto-generated catch block
+							 * e.printStackTrace(); } stop1(); avoidanceFlag =
+							 * true; pathFollowing = false; moveAlongPathFlag =
+							 * true;
+							 * 
+							 * System.out.println("recovery done");
+							 * 
+							 * } else if (sonarValues[0] < 0.02 ||
+							 * sonarValues[1] < 0.02 || sonarValues[2] < 0.02 ||
+							 * (sonarValues[5] < 0.02 && sonarValues[3] > 0.5 &&
+							 * sonarValues[4] > 0.5 && sonarValues[9] > 0.5) ||
+							 * (sonarValues[6] < 0.02 && sonarValues[3] > 0.5 &&
+							 * sonarValues[4] > 0.5 && sonarValues[9] > 0.5) ||
+							 * (sonarValues[7] < 0.02 && sonarValues[3] > 0.5 &&
+							 * sonarValues[4] > 0.5 && sonarValues[9] > 0.5) ||
+							 * (sonarValues[8] < 0.02 && sonarValues[3] > 0.5 &&
+							 * sonarValues[4] > 0.5 && sonarValues[9] > 0.5)) {
+							 * 
+							 * System.out.println("Start recover from crash");
+							 * moveAlongPathFlag = false; avoidanceFlag = false;
+							 * turningFlag = false; pos2D.setSpeed(0.2, 0);
+							 * 
+							 * try { sleep(500); } catch (InterruptedException
+							 * e) {
+							 * 
+							 * e.printStackTrace(); } stop1(); avoidanceFlag =
+							 * true; pathFollowing = false; moveAlongPathFlag =
+							 * true; System.out.println("recovery done");
+							 */
+
+						}
+						else{
+							if(sonarValues[5]<0.1 || sonarValues[6]<0.1|| sonarValues[7]<0.1|| sonarValues[8]<0.1){
+								moveAlongPathFlag = false;
+								pathFollowing = false;
+								avoidanceFlag  =false;
+								
+								pos2D.setSpeed(-0.2, 0);
+								try {
+									sleep(1000);
+								} catch (InterruptedException e) {
+									e.printStackTrace();
+								}
+								avoidanceFlag = true;
+								getFrontierAndGo();
+								
+								
+							}
+						}
+
+						try {
+							sleep(10);
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+					}
+					try {
+						sleep(100);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			}
+
+		};
+		recovery.start();
+	}
+
+	public void turn(int angle, double speed) {
+
+		double targetYaw = cauculateYaw(angle);
+		turn(targetYaw, speed);
+
+	}
+
+	public void turn(double target, double speed) {
+
+		turningFlag = true;
+		long targetYaw = roundedYaw(target);
+
+		System.out.println(targetYaw + "");
+
+		while (!pos2D.isDataReady()) {
+		}
+		long position = roundedYaw(pos2D.getYaw());
+
+		direction = position - targetYaw > 0 ? -1 : 1;
+		long lastDifference;
+		long pi = roundedYaw(Math.PI);
+		long temp = 0;
+
+		long difference = Math.abs(roundedYaw(pos2D.getYaw()) - targetYaw);
+		// correctDirection = (pos2D.getYaw() - targetYaw) > 0 ? true : false;
+
+		if (position < -(pi - roundedYaw(0.3)) / 2 && targetYaw > pi / 2) {
+			direction = -1;
+
+			//System.out.println("Turn right");
+			while (difference > 0 && turningFlag) {
+
+				if (pos2D.isDataReady()) {
+					lastDifference = difference;
+					position = roundedYaw(pos2D.getYaw());
+					difference = Math.abs(position - targetYaw);
+
+					if (position < -(pi - roundedYaw(0.3)) / 2) {
+						direction = -1;
+
+						temp = Math.abs(position + pi) + 1;
+
+						if (temp < PRECISION / 100) {
+							pos2D.setSpeed(0, direction * temp / PRECISION / 2);
+						}
+
+						else if (temp < PRECISION / 5) {
+							pos2D.setSpeed(0, direction * temp / PRECISION);
+						} else {
+							pos2D.setSpeed(0, direction * speed);
+						}
+
+					}
+
+					else if (position > pi / 2) {
+
+						if (lastDifference < difference) {
+							direction = 0 - direction;
+						}
+
+						if (difference < PRECISION / 100) {
+							pos2D.setSpeed(0, direction * difference
+									/ PRECISION / 2);
+						}
+
+						else if (difference < PRECISION / 5) {
+							pos2D.setSpeed(0, direction * difference
+									/ PRECISION);
+						} else {
+							pos2D.setSpeed(0, direction * speed);
+						}
+
+					}
+
+					difference = Math.abs(roundedYaw(pos2D.getYaw())
+							- targetYaw);
+				}
+			}
+			pos2D.setSpeed(0, 0);
+			return;
+
+		}
+
+		else if (position > (pi - roundedYaw(0.3)) / 2 && targetYaw < -pi / 2) {
+
+			//System.out.println("Turn left");
+			while (difference > 0 && turningFlag) {
+
+				if (pos2D.isDataReady()) {
+					lastDifference = difference;
+					position = roundedYaw(pos2D.getYaw());
+					difference = Math.abs(position - targetYaw);
+
+					if (position > pi - roundedYaw(0.3) / 2) {
+						direction = 1;
+
+						temp = Math.abs(position - pi);
+
+						if (temp < PRECISION / 100) {
+							pos2D.setSpeed(0, direction * temp / PRECISION / 2);
+						}
+
+						else if (temp < PRECISION / 5) {
+							pos2D.setSpeed(0, direction * temp / PRECISION);
+						} else {
+							pos2D.setSpeed(0, direction * speed);
+						}
+
+					}
+
+					else if (position < -pi / 2) {
+
+						if (lastDifference < difference) {
+							direction = 0 - direction;
+						}
+
+						if (difference < PRECISION / 100) {
+							pos2D.setSpeed(0, direction * difference
+									/ PRECISION / 2);
+						}
+
+						else if (difference < PRECISION / 5) {
+							pos2D.setSpeed(0, direction * difference
+									/ PRECISION);
+						} else {
+							pos2D.setSpeed(0, direction * speed);
+						}
+
+					}
+
+					difference = Math.abs(roundedYaw(pos2D.getYaw())
+							- targetYaw);
+				}
+			}
+			pos2D.setSpeed(0, 0);
+			return;
+
+		}
+
+		while (difference > 0 && turningFlag == true) {
+			//System.out.println(direction+ "   " + difference );
+			if (pos2D.isDataReady()) {
+				lastDifference = difference;
+				difference = Math.abs(roundedYaw(pos2D.getYaw()) - targetYaw);
+
+				if (lastDifference < difference) {
+					direction = 0 - direction;
+				}
+				if (difference >= PRECISION / 10) {
+					pos2D.setSpeed(0, direction * speed);
+				}
+
+				else if (difference < PRECISION / 100) {
+					pos2D.setSpeed(0, direction * difference / PRECISION / 2);
+				}
+
+				else if (difference < PRECISION / 5) {
+					pos2D.setSpeed(0, direction * difference / PRECISION);
+				}
+
+				difference = Math.abs(roundedYaw(pos2D.getYaw()) - targetYaw);
+			}
+
+		}
+
+		
+		pos2D.setSpeed(0, 0);
+		turningFlag = false;
+
+	}
+
+	private void turn360(final double speed) {
+		turningFlag = true;
+		direction = 1;
+
+		while (!pos2D.isDataReady())
+			;
+		double target = pos2D.getYaw();
+		Thread turn360 = new Thread() {
+
+			public void run() {
+				while (!pos2D.isDataReady())
+					;
+				long targetYaw = roundedYaw(pos2D.getYaw());
+
+				pos2D.setSpeed(0, direction * speed);
+				int count = 0;
+				while (turningFlag && count < 10) {
+					count++;
+					try {
+						sleep(1000);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+
+				while (!pos2D.isDataReady()) {
+				}
+
+				long difference = Math.abs(roundedYaw(pos2D.getYaw())
+						- targetYaw);
+
+				while (difference > 100 && turningFlag) {
+
+					while (!pos2D.isDataReady()) {
+
+					}
+
+					difference = Math.abs(roundedYaw(pos2D.getYaw())
+							- targetYaw);
+
+					try {
+						sleep(50);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+
+				}
+
+			}
+		};
+		turn360.start();
+		try {
+			turn360.join();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		// System.out.println("difference < 100");
+		turn(target, speed);
+
+	}
+
+	private double cauculateYaw(int angle) {
+		double targetYaw = 0;
+		double a = Math.PI / 180;
+		while (!pos2D.isDataReady())
+			;
+
+		double lastangle = pos2D.getYaw();
+		if (angle < 0) {
+			targetYaw = lastangle - a * angle;
+		}
+		if (angle > 0) {
+			targetYaw = lastangle - a * angle;
+		}
+
+		if (targetYaw > Math.PI) {
+			targetYaw = -Math.PI + (targetYaw - Math.PI);
+		}
+		if (targetYaw < -Math.PI) {
+			targetYaw = Math.PI + (targetYaw + Math.PI);
+		}
+
+		return targetYaw;
+	}
+
+	private long roundedYaw(double yaw) {
+		return (Math.round(yaw * PRECISION));
+	}
+
+	public void slowForward() {
+		pos2D.setSpeed(0.05, 0);
+	}
+
+	public void forward() {
+		pos2D.setSpeed(0.3, 0);
+	}
+
+	public void backward() {
+		pos2D.setSpeed(-0.3, 0);
+	}
+
+	public void turnLeft() {
+		pos2D.setSpeed(0, 0.2);
+	}
+
+	public void turnRight() {
+		pos2D.setSpeed(0, -0.2);
+	}
+
+	public void stop1() {
+		pos2D.setSpeed(0, 0);
+	}
+
+	public void turnNorth() {
+		turn(Math.PI / 2, 0.3);
+	}
+
+	public void turnSouth() {
+		turn(-Math.PI / 2, 0.3);
+	}
+
+	public void turnEast() {
+		turn(0, 0.3);
+	}
+
+	public void turnWest() {
+		turn(Math.PI, 0.3);
+	}
+
+	public static void main(String args[]) {
+
+		VacuumBot a = new VacuumBot();
+		// new controlPanel(vacuumBot);
+		visualmap = a.new VisualMap();
+		// Screenshot s = new Screenshot("a", "b", drawMap.frame);
+		// s.savePicture("aaaaaaa");
+	}
+
+	class VisualMap extends JFrame {
+
+		JTextArea jta;
+
+		public VisualMap() {
+			Container main = getContentPane();
+			jta = new JTextArea();
+			jta.setEditable(false);
+			main.setLayout(new BorderLayout());
+			main.add(jta, BorderLayout.CENTER);
+
+			for (int i = 0; i < map.map.length; i++) {
+				for (int j = 0; j < map.map[i].length; j++) {
+					jta.append("" + map.map[j][i].getState());
+				}
+				jta.append("\n");
+			}
+
+			pack();
+			// setVisible(true);
+		}
+
+		public void update() {
+			jta.setText("");
+			for (int i = 0; i < map.map.length; i++) {
+				for (int j = 0; j < map.map[i].length; j++) {
+					jta.append("" + map.map[j][i].getState());
+				}
+				jta.append("\n");
+
+			}
+			jta.repaint();
+		}
+
+		/*
+		 * JLabel [][]labels; public VisualMap() {
+		 * 
+		 * Container main = getContentPane(); main.setLayout(new GridLayout(50,
+		 * 50));
+		 * 
+		 * labels = new JLabel[110][130]; for(int i =0;i<labels.length;i++){
+		 * for(int j=0;j<labels[i].length;j++){ labels[i][j] = new JLabel("2");
+		 * } }
+		 * 
+		 * for (int i = 0; i < map.length; i++) { for (int j = 0; j <
+		 * map[i].length; j++) {
+		 * 
+		 * main.add(labels[i][j]); } }
+		 * 
+		 * pack(); setVisible(true); }
+		 * 
+		 * public void changeMap(int x,int y,int value){
+		 * 
+		 * labels[x][y].setText(""+value); labels[x][y].repaint();
+		 * 
+		 * 
+		 * }
+		 */
+	}
+
+	private void setCurrentPosttion(int i, int j) {
+		map.map[i][j].setState(3);
+		for (int k = 1; k <= 2; k++) {
+			map.map[i - k][j].setState(3);
+			map.map[i - k][j + k].setState(3);
+			map.map[i - k][j - k].setState(3);
+			map.map[i + k][j].setState(3);
+			map.map[i + k][j + k].setState(3);
+			map.map[i + k][j - k].setState(3);
+			map.map[i][j + k].setState(3);
+			map.map[i][j - k].setState(3);
+		}
+		map.map[i + 2][j - 1].setState(3);
+		map.map[i + 2][j + 1].setState(3);
+		map.map[i + 1][j + 2].setState(3);
+		map.map[i - 1][j + 2].setState(3);
+		map.map[i - 2][j - 1].setState(3);
+		map.map[i - 2][j + 1].setState(3);
+		map.map[i + 1][j - 2].setState(3);
+		map.map[i - 1][j - 2].setState(3);
+
+		// north
+		if (yaw > 0.78 && yaw < 2.33) {
+			map.map[i + 2][j - 1].setState(1);
+			map.map[i + 2][j].setState(1);
+			map.map[i + 2][j + 1].setState(1);
+			map.map[i + 2][j - 2].setState(1);
+			map.map[i - 2][j - 1].setState(1);
+			map.map[i - 2][j].setState(1);
+			map.map[i - 2][j + 1].setState(1);
+			map.map[i - 2][j - 2].setState(1);
+			map.map[i + 1][j - 2].setState(1);
+			map.map[i - 1][j - 2].setState(1);
+		}
+		// south
+		else if (yaw < -0.78 && yaw > -2.33) {
+			map.map[i + 2][j - 1].setState(1);
+			map.map[i + 2][j].setState(1);
+			map.map[i + 2][j + 1].setState(1);
+			map.map[i + 2][j + 2].setState(1);
+			map.map[i - 2][j - 1].setState(1);
+			map.map[i - 2][j].setState(1);
+			map.map[i - 2][j + 1].setState(1);
+			map.map[i - 2][j + 2].setState(1);
+			map.map[i + 1][j + 2].setState(1);
+			map.map[i - 1][j + 2].setState(1);
+		}
+		// east
+		else if (yaw > -0.78 && yaw < 0.78) {
+			map.map[i + 2][j + 2].setState(1);
+			map.map[i - 1][j + 2].setState(1);
+			map.map[i][j + 2].setState(1);
+			map.map[i + 1][j + 2].setState(1);
+			map.map[i + 2][j - 2].setState(1);
+			map.map[i - 1][j - 2].setState(1);
+			map.map[i][j - 2].setState(1);
+			map.map[i + 1][j - 2].setState(1);
+			map.map[i + 2][j - 1].setState(1);
+			map.map[i + 2][j + 1].setState(1);
+		}
+		// west
+		else if (yaw > 2.33 || yaw < -2.33) {
+			map.map[i - 2][j + 2].setState(1);
+			map.map[i - 1][j + 2].setState(1);
+			map.map[i][j + 2].setState(1);
+			map.map[i + 1][j + 2].setState(1);
+			map.map[i - 2][j - 2].setState(1);
+			map.map[i - 1][j - 2].setState(1);
+			map.map[i][j - 2].setState(1);
+			map.map[i + 1][j - 2].setState(1);
+			map.map[i - 2][j - 1].setState(1);
+			map.map[i - 2][j + 1].setState(1);
+		}
+
+	}
+
+	private void clearLastPosttion(int i, int j) {
+		map.map[i][j].setState(3);
+		for (int k = 1; k <= 2; k++) {
+			map.map[i - k][j].setState(1);
+			map.map[i - k][j + k].setState(1);
+			map.map[i - k][j - k].setState(1);
+			map.map[i + k][j].setState(1);
+			map.map[i + k][j + k].setState(1);
+			map.map[i + k][j - k].setState(1);
+			map.map[i][j + k].setState(1);
+			map.map[i][j - k].setState(1);
+		}
+	}
+}
